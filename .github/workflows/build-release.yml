@@ -26,6 +26,7 @@ on:
         type: choice
         options:
           - all
+          - armel
           - armhf
           - arm64
           - amd64
@@ -70,7 +71,10 @@ jobs:
           )
 
           # Supported architectures with Docker platform mapping
+          # Note: armel uses linux/arm/v6 for true ARMv6 support (Pi Zero W, Pi 1)
+          # armhf uses linux/arm/v7 for ARMv7 (Pi 2, Pi 3 32-bit)
           declare -A ARCH_MAP=(
+            ["armel"]="linux/arm/v6"
             ["armhf"]="linux/arm/v7"
             ["arm64"]="linux/arm64"
             ["amd64"]="linux/amd64"
@@ -136,7 +140,7 @@ jobs:
       - name: Set up QEMU for cross-compilation
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm,arm64
+          platforms: linux/arm/v6,linux/arm/v7,linux/arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -165,6 +169,14 @@ jobs:
 
           echo "=== Building PiAware for $DISTRO ($ARCH) ==="
           echo "=== cx_Freeze version: $CX_FREEZE_VER ==="
+
+          # For ARMv6 (armel) builds, set compiler flags to target Pi Zero W / Pi 1
+          if [ "$ARCH" = "armel" ]; then
+            echo "=== Configuring for ARMv6 (Pi Zero W / Pi 1) ==="
+            export CFLAGS="-O2 -march=armv6 -mfpu=vfp -mfloat-abi=hard"
+            export CXXFLAGS="$CFLAGS"
+            export DEB_BUILD_OPTIONS="nocheck"
+          fi
 
           # Install build dependencies
           apt-get update
@@ -275,7 +287,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm,arm64
+          platforms: linux/arm/v6,linux/arm/v7,linux/arm64
 
       - name: Generate build info
         id: build-info
@@ -298,6 +310,14 @@ jobs:
           ARCH="${ARCH}"
 
           echo "=== Building dump1090-fa for $DISTRO ($ARCH) ==="
+
+          # For ARMv6 (armel) builds, set compiler flags to target Pi Zero W / Pi 1
+          if [ "$ARCH" = "armel" ]; then
+            echo "=== Configuring for ARMv6 (Pi Zero W / Pi 1) ==="
+            export CFLAGS="-O2 -march=armv6 -mfpu=vfp -mfloat-abi=hard"
+            export CXXFLAGS="$CFLAGS"
+            export DEB_BUILD_OPTIONS="nocheck"
+          fi
 
           apt-get update
           apt-get install -y --no-install-recommends \
@@ -411,13 +431,27 @@ jobs:
           - **Debian 11 (Bullseye)** - Including Raspberry Pi OS Bullseye
 
           ## Architectures
-          - **armhf** (32-bit ARM) - For Raspberry Pi Zero W, Pi 2, Pi 3 (32-bit OS)
+          - **armel** (32-bit ARMv6) - For Raspberry Pi Zero W, Pi 1, Pi Zero (requires ARMv6)
+          - **armhf** (32-bit ARMv7) - For Raspberry Pi 2, Pi 3 (32-bit OS)
           - **arm64** (64-bit ARM) - For Raspberry Pi 3, 4, 5 (64-bit OS)
           - **amd64** (64-bit x86) - For standard PCs and servers
 
           ## Installation
 
-          ### For Raspberry Pi Zero W (32-bit, Trixie):
+          ### For Raspberry Pi Zero W (ARMv6, Trixie):
+          \`\`\`bash
+          # Download the armel packages for trixie (ARMv6 for Pi Zero W)
+          wget <url-to-piaware-trixie-armel.deb>
+          wget <url-to-dump1090-fa-trixie-armel.deb>
+
+          # Install
+          sudo dpkg -i dump1090-fa-*.deb
+          sudo apt-get install -f -y
+          sudo dpkg -i piaware-*.deb
+          sudo apt-get install -f -y
+          \`\`\`
+
+          ### For Raspberry Pi 2/3 (ARMv7 32-bit, Trixie):
           \`\`\`bash
           # Download the armhf packages for trixie
           wget <url-to-piaware-trixie-armhf.deb>
@@ -425,8 +459,9 @@ jobs:
 
           # Install
           sudo dpkg -i dump1090-fa-*.deb
+          sudo apt-get install -f -y
           sudo dpkg -i piaware-*.deb
-          sudo apt-get install -f  # Fix any missing dependencies
+          sudo apt-get install -f -y
           \`\`\`
 
           ## Packages in this release:
