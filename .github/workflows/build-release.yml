@@ -235,6 +235,21 @@ jobs:
             sed -i 's/python3-pyasyncore, //g' debian/control
             echo "=== Updated debian/control Build-Depends ==="
             grep "Build-Depends" debian/control || true
+
+            # Fix freeze-core pyproject.toml license format for older setuptools
+            # Bookworm's setuptools requires license = {text = "MIT"} not license = "MIT"
+            if [ -f freeze-core-0.4.2/pyproject.toml ]; then
+              echo "=== Patching freeze-core pyproject.toml for bookworm setuptools ==="
+              sed -i 's/^license = "MIT"/license = {text = "MIT"}/' freeze-core-0.4.2/pyproject.toml
+              grep "license" freeze-core-0.4.2/pyproject.toml || true
+            fi
+
+            # Also fix cx_Freeze pyproject.toml if it has the same issue
+            if [ -f cx_Freeze-8.5.0/pyproject.toml ]; then
+              echo "=== Patching cx_Freeze pyproject.toml for bookworm setuptools ==="
+              sed -i 's/^license = "LGPL-3.0"/license = {text = "LGPL-3.0"}/' cx_Freeze-8.5.0/pyproject.toml
+              grep "license" cx_Freeze-8.5.0/pyproject.toml || true
+            fi
           fi
 
           # For armel builds, fix the debian/rules to use armv6l platform for wheel builds
