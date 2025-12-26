@@ -249,13 +249,32 @@ jobs:
           # Copy source to a temp directory that can be modified
           cp -r "${{ github.workspace }}" /tmp/piaware-build-src
 
-          docker run --rm --platform=${{ matrix.platform }} \
+          # Select Docker image based on architecture
+          # ARMv6 (armel) requires special arm32v6 images since official debian doesn't support it
+          if [ "${{ matrix.arch }}" = "armel" ]; then
+            # Use balenalib Raspberry Pi image for ARMv6 support
+            # Map distro names to balenalib tags
+            case "${{ matrix.distro }}" in
+              trixie)   DOCKER_IMAGE="balenalib/raspberry-pi-debian:bookworm" ;;  # Use bookworm as base, trixie not available
+              bookworm) DOCKER_IMAGE="balenalib/raspberry-pi-debian:bookworm" ;;
+              bullseye) DOCKER_IMAGE="balenalib/raspberry-pi-debian:bullseye" ;;
+              *)        DOCKER_IMAGE="balenalib/raspberry-pi-debian:bookworm" ;;
+            esac
+            PLATFORM_FLAG=""  # balenalib images are already ARMv6
+          else
+            DOCKER_IMAGE="debian:${{ matrix.distro }}"
+            PLATFORM_FLAG="--platform=${{ matrix.platform }}"
+          fi
+
+          echo "Using Docker image: $DOCKER_IMAGE"
+
+          docker run --rm $PLATFORM_FLAG \
             -v "/tmp/piaware-build-src:/build" \
             -v "${{ github.workspace }}/output:/output" \
             -e DISTRO=${{ matrix.distro }} \
             -e ARCH=${{ matrix.arch }} \
             -e CX_FREEZE_VER=${{ matrix.cx_freeze }} \
-            debian:${{ matrix.distro }} \
+            $DOCKER_IMAGE \
             bash /build/build-piaware.sh
 
       - name: Upload artifacts
@@ -373,13 +392,31 @@ jobs:
         run: |
           mkdir -p output
 
-          docker run --rm --platform=${{ matrix.platform }} \
+          # Select Docker image based on architecture
+          # ARMv6 (armel) requires special arm32v6 images since official debian doesn't support it
+          if [ "${{ matrix.arch }}" = "armel" ]; then
+            # Use balenalib Raspberry Pi image for ARMv6 support
+            case "${{ matrix.distro }}" in
+              trixie)   DOCKER_IMAGE="balenalib/raspberry-pi-debian:bookworm" ;;
+              bookworm) DOCKER_IMAGE="balenalib/raspberry-pi-debian:bookworm" ;;
+              bullseye) DOCKER_IMAGE="balenalib/raspberry-pi-debian:bullseye" ;;
+              *)        DOCKER_IMAGE="balenalib/raspberry-pi-debian:bookworm" ;;
+            esac
+            PLATFORM_FLAG=""
+          else
+            DOCKER_IMAGE="debian:${{ matrix.distro }}"
+            PLATFORM_FLAG="--platform=${{ matrix.platform }}"
+          fi
+
+          echo "Using Docker image: $DOCKER_IMAGE"
+
+          docker run --rm $PLATFORM_FLAG \
             -v "${{ github.workspace }}/dump1090:/src:ro" \
             -v "${{ github.workspace }}/build-dump1090.sh:/build-dump1090.sh:ro" \
             -v "${{ github.workspace }}/output:/output" \
             -e DISTRO=${{ matrix.distro }} \
             -e ARCH=${{ matrix.arch }} \
-            debian:${{ matrix.distro }} \
+            $DOCKER_IMAGE \
             bash /build-dump1090.sh
 
       - name: Upload artifacts
