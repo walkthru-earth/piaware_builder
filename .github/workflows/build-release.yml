@@ -226,15 +226,17 @@ jobs:
         run: |
           mkdir -p output
 
+          # Copy source to a temp directory that can be modified
+          cp -r "${{ github.workspace }}" /tmp/piaware-build-src
+
           docker run --rm --platform=${{ matrix.platform }} \
-            -v "${{ github.workspace }}:/build:ro" \
-            -v "${{ github.workspace }}/build-piaware.sh:/build-piaware.sh:ro" \
+            -v "/tmp/piaware-build-src:/build" \
             -v "${{ github.workspace }}/output:/output" \
             -e DISTRO=${{ matrix.distro }} \
             -e ARCH=${{ matrix.arch }} \
             -e CX_FREEZE_VER=${{ matrix.cx_freeze }} \
             debian:${{ matrix.distro }} \
-            bash /build-piaware.sh
+            bash /build/build-piaware.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
