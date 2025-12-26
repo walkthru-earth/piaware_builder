@@ -237,11 +237,12 @@ jobs:
             grep "Build-Depends" debian/control || true
 
             # Fix freeze-core pyproject.toml for older setuptools in bookworm
-            # 1. Change license = "MIT" to license = {text = "MIT"}
+            # 1. Convert license = "XYZ" to license = {text = "XYZ"} format
             # 2. Remove license-files property (not supported in older setuptools)
             if [ -f freeze-core-0.4.2/pyproject.toml ]; then
               echo "=== Patching freeze-core pyproject.toml for bookworm setuptools ==="
-              sed -i 's/^license = "MIT"/license = {text = "MIT"}/' freeze-core-0.4.2/pyproject.toml
+              # Convert any license = "XYZ" to license = {text = "XYZ"} format
+              sed -i 's/^license = "\([^"]*\)"/license = {text = "\1"}/' freeze-core-0.4.2/pyproject.toml
               # Remove license-files line entirely (causes "must not contain {'license-files'}" error)
               sed -i '/^license-files/d' freeze-core-0.4.2/pyproject.toml
               echo "=== freeze-core pyproject.toml after patching ==="
@@ -249,9 +250,11 @@ jobs:
             fi
 
             # Also fix cx_Freeze pyproject.toml if it has the same issues
+            # cx_Freeze 8.5.0 uses license = "PSF-2.0" which needs to be converted
             if [ -f cx_Freeze-8.5.0/pyproject.toml ]; then
               echo "=== Patching cx_Freeze pyproject.toml for bookworm setuptools ==="
-              sed -i 's/^license = "LGPL-3.0"/license = {text = "LGPL-3.0"}/' cx_Freeze-8.5.0/pyproject.toml
+              # Convert any license = "XYZ" to license = {text = "XYZ"} format
+              sed -i 's/^license = "\([^"]*\)"/license = {text = "\1"}/' cx_Freeze-8.5.0/pyproject.toml
               sed -i '/^license-files/d' cx_Freeze-8.5.0/pyproject.toml
               echo "=== cx_Freeze pyproject.toml after patching ==="
               grep -E "^license" cx_Freeze-8.5.0/pyproject.toml || echo "No license lines found"
