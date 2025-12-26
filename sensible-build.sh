@@ -19,7 +19,7 @@ shallow_clone() {
 }
 
 usage() {
-  echo "syntax: $0 <buster|bullseye|bookworm>" >&2
+  echo "syntax: $0 <buster|bullseye|bookworm|trixie>" >&2
   exit 1
 }
 
@@ -51,6 +51,11 @@ case $dist in
   bookworm)
     debdist=bookworm
     targetdist=bookworm
+    extraversion=""
+    ;;
+  trixie)
+    debdist=trixie
+    targetdist=trixie
     extraversion=""
     ;;
   xenial)
@@ -172,6 +177,17 @@ case $debdist in
         fetch_archive cx_Freeze-6.15.9 \
                       https://github.com/marcelotduarte/cx_Freeze/archive/refs/tags/6.15.9.tar.gz \
                       d32b309b355f2b377dae585a839e39e3251b3f9716f2b4983be92972c2863000
+        ;;
+
+    trixie)
+        # Trixie has Python 3.12; cx_Freeze 8.x with freeze-core for compatibility
+        # Based on upstream PR #30 by retornam
+        fetch_archive cx_Freeze-8.5.0 \
+                      https://github.com/marcelotduarte/cx_Freeze/archive/refs/tags/8.5.0.tar.gz \
+                      2502fd12ce008afb2a3f32056e0808cb16f4f863de9b70c016e0f54716b4788e
+        fetch_archive freeze-core-0.4.2 \
+                      https://github.com/marcelotduarte/freeze-core/archive/refs/tags/0.4.2.tar.gz \
+                      1d1ba3c8c8f89feb45fd11478a840c16734fd0f8a3d949b0d788854c84f3ecbe
         ;;
 esac
 

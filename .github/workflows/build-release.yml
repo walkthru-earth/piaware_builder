@@ -1,0 +1,458 @@
+name: Build and Release PiAware Packages
+
+on:
+  push:
+    branches: [master, main, dev]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      debian_version:
+        description: 'Debian version to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - trixie
+          - bookworm
+          - bullseye
+      architecture:
+        description: 'Architecture to build'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - armhf
+          - arm64
+          - amd64
+
+env:
+  # Version configuration - sourced from sensible-build.sh
+  PIAWARE_VERSION: "v10.2"
+  DUMP1090_VERSION: "v10.2"
+  DUMP978_VERSION: "v10.2"
+  TCLLAUNCHER_VERSION: "v1.10"
+  MLAT_CLIENT_VERSION: "v0.2.13"
+
+# Concurrency: cancel in-progress runs on same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # MATRIX GENERATION - Dynamic build matrix based on inputs
+  # ============================================================
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      piaware_matrix: ${{ steps.set-matrix.outputs.piaware_matrix }}
+      dump1090_matrix: ${{ steps.set-matrix.outputs.dump1090_matrix }}
+    steps:
+      - name: Generate build matrices
+        id: set-matrix
+        run: |
+          # Build matrix based on inputs
+          DEBIAN_INPUT="${{ github.event.inputs.debian_version || 'all' }}"
+          ARCH_INPUT="${{ github.event.inputs.architecture || 'all' }}"
+
+          # Supported Debian versions with their configurations
+          # Format: version|codename|python_version|cx_freeze_version
+          DEBIAN_CONFIGS=(
+            "13|trixie|3.12|7.2.0"
+            "12|bookworm|3.11|6.15.9"
+            "11|bullseye|3.9|6.8.3"
+          )
+
+          # Supported architectures with Docker platform mapping
+          declare -A ARCH_MAP=(
+            ["armhf"]="linux/arm/v7"
+            ["arm64"]="linux/arm64"
+            ["amd64"]="linux/amd64"
+          )
+
+          # Build piaware matrix
+          PIAWARE_JSON='{"include":['
+          DUMP1090_JSON='{"include":['
+          FIRST_P=true
+          FIRST_D=true
+
+          for config in "${DEBIAN_CONFIGS[@]}"; do
+            IFS='|' read -r deb_ver codename py_ver cx_ver <<< "$config"
+
+            if [[ "$DEBIAN_INPUT" != "all" && "$DEBIAN_INPUT" != "$codename" ]]; then
+              continue
+            fi
+
+            for arch in "${!ARCH_MAP[@]}"; do
+              if [[ "$ARCH_INPUT" != "all" && "$ARCH_INPUT" != "$arch" ]]; then
+                continue
+              fi
+
+              platform="${ARCH_MAP[$arch]}"
+
+              # PiAware matrix entry
+              if [[ "$FIRST_P" != "true" ]]; then PIAWARE_JSON+=','; fi
+              FIRST_P=false
+              PIAWARE_JSON+="{\"distro\":\"$codename\",\"debian_version\":\"$deb_ver\",\"arch\":\"$arch\",\"platform\":\"$platform\",\"python\":\"$py_ver\",\"cx_freeze\":\"$cx_ver\"}"
+
+              # dump1090 matrix entry
+              if [[ "$FIRST_D" != "true" ]]; then DUMP1090_JSON+=','; fi
+              FIRST_D=false
+              DUMP1090_JSON+="{\"distro\":\"$codename\",\"arch\":\"$arch\",\"platform\":\"$platform\"}"
+            done
+          done
+
+          PIAWARE_JSON+=']}'
+          DUMP1090_JSON+=']}'
+
+          echo "piaware_matrix=$PIAWARE_JSON" >> $GITHUB_OUTPUT
+          echo "dump1090_matrix=$DUMP1090_JSON" >> $GITHUB_OUTPUT
+
+          echo "Generated PiAware matrix: $PIAWARE_JSON"
+          echo "Generated dump1090 matrix: $DUMP1090_JSON"
+
+  # ============================================================
+  # BUILD PIAWARE - Main piaware package build
+  # ============================================================
+  build-piaware:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.piaware_matrix) }}
+
+    steps:
+      - name: Checkout piaware_builder
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up QEMU for cross-compilation
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm,arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate build info
+        id: build-info
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ env.PIAWARE_VERSION }}-$(date +%Y%m%d)-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "artifact_name=piaware-$VERSION-${{ matrix.distro }}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+
+      - name: Create build script
+        run: |
+          cat > build-piaware.sh << 'SCRIPT'
+          #!/bin/bash
+          set -ex
+
+          # Environment variables passed from GitHub Actions
+          DISTRO="${DISTRO}"
+          ARCH="${ARCH}"
+          CX_FREEZE_VER="${CX_FREEZE_VER}"
+
+          echo "=== Building PiAware for $DISTRO ($ARCH) ==="
+          echo "=== cx_Freeze version: $CX_FREEZE_VER ==="
+
+          # Install build dependencies
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            devscripts \
+            debhelper \
+            tcl8.6-dev \
+            autoconf \
+            python3-dev \
+            python3-venv \
+            python3-setuptools \
+            python3-wheel \
+            python3-build \
+            python3-pip \
+            libz-dev \
+            openssl \
+            libssl-dev \
+            libboost-system-dev \
+            libboost-program-options-dev \
+            libboost-regex-dev \
+            libboost-filesystem-dev \
+            patchelf \
+            wget \
+            ca-certificates \
+            pkg-config \
+            net-tools \
+            iproute2
+
+          cd /build
+
+          # Run the sensible build script
+          echo "=== Running sensible-build.sh for $DISTRO ==="
+          ./sensible-build.sh $DISTRO
+
+          # Build the package
+          cd package-$DISTRO
+          echo "=== Building Debian package ==="
+
+          # Build package
+          dpkg-buildpackage -b --no-sign -a$ARCH 2>&1 || {
+            echo "Cross-compile build failed, trying native build..."
+            dpkg-buildpackage -b --no-sign 2>&1
+          }
+
+          # Move artifacts
+          echo "=== Collecting artifacts ==="
+          find .. -maxdepth 1 -name "*.deb" -exec mv {} /output/ \;
+          find .. -maxdepth 1 -name "*.changes" -exec mv {} /output/ \;
+          find .. -maxdepth 1 -name "*.buildinfo" -exec mv {} /output/ \;
+
+          echo "=== Build complete ==="
+          ls -la /output/
+          SCRIPT
+          chmod +x build-piaware.sh
+
+      - name: Build in Docker container
+        run: |
+          mkdir -p output
+
+          docker run --rm --platform=${{ matrix.platform }} \
+            -v "${{ github.workspace }}:/build:ro" \
+            -v "${{ github.workspace }}/build-piaware.sh:/build-piaware.sh:ro" \
+            -v "${{ github.workspace }}/output:/output" \
+            -e DISTRO=${{ matrix.distro }} \
+            -e ARCH=${{ matrix.arch }} \
+            -e CX_FREEZE_VER=${{ matrix.cx_freeze }} \
+            debian:${{ matrix.distro }} \
+            bash /build-piaware.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build-info.outputs.artifact_name }}
+          path: output/*
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ============================================================
+  # BUILD DUMP1090-FA - Standalone dump1090 package
+  # ============================================================
+  build-dump1090:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.dump1090_matrix) }}
+
+    steps:
+      - name: Checkout dump1090 fork
+        uses: actions/checkout@v4
+        with:
+          repository: walkthru-earth/dump1090
+          path: dump1090
+          fetch-depth: 0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm,arm64
+
+      - name: Generate build info
+        id: build-info
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="${{ env.DUMP1090_VERSION }}-$(date +%Y%m%d)-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "artifact_name=dump1090-fa-$VERSION-${{ matrix.distro }}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+
+      - name: Create build script
+        run: |
+          cat > build-dump1090.sh << 'SCRIPT'
+          #!/bin/bash
+          set -ex
+
+          DISTRO="${DISTRO}"
+          ARCH="${ARCH}"
+
+          echo "=== Building dump1090-fa for $DISTRO ($ARCH) ==="
+
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            devscripts \
+            debhelper \
+            librtlsdr-dev \
+            pkg-config \
+            libncurses5-dev \
+            libusb-1.0-0-dev \
+            git \
+            wget
+
+          cp -r /src /build-dump1090
+          cd /build-dump1090
+
+          # Check if prepare-build.sh exists and supports this distro
+          if [ -f prepare-build.sh ]; then
+            # Add trixie support if not present
+            if ! grep -q "trixie)" prepare-build.sh; then
+              sed -i '/bookworm)/a\    trixie)\n        ;;' prepare-build.sh
+            fi
+
+            ./prepare-build.sh $DISTRO 2>/dev/null || {
+              echo "prepare-build.sh failed, using debian directory directly"
+              mkdir -p package-$DISTRO
+              cp -r debian/* package-$DISTRO/
+            }
+
+            if [ -d "package-$DISTRO" ]; then
+              cd package-$DISTRO
+            fi
+          fi
+
+          # Build with RTL-SDR support only (most common for Pi setups)
+          echo "=== Building Debian package ==="
+          dpkg-buildpackage -b --no-sign --build-profiles=custom,rtlsdr 2>&1 || \
+            dpkg-buildpackage -b --no-sign 2>&1
+
+          # Collect artifacts
+          echo "=== Collecting artifacts ==="
+          find /build-dump1090 -maxdepth 2 -name "*.deb" -exec cp {} /output/ \;
+
+          echo "=== Build complete ==="
+          ls -la /output/
+          SCRIPT
+          chmod +x build-dump1090.sh
+
+      - name: Build in Docker container
+        run: |
+          mkdir -p output
+
+          docker run --rm --platform=${{ matrix.platform }} \
+            -v "${{ github.workspace }}/dump1090:/src:ro" \
+            -v "${{ github.workspace }}/build-dump1090.sh:/build-dump1090.sh:ro" \
+            -v "${{ github.workspace }}/output:/output" \
+            -e DISTRO=${{ matrix.distro }} \
+            -e ARCH=${{ matrix.arch }} \
+            debian:${{ matrix.distro }} \
+            bash /build-dump1090.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build-info.outputs.artifact_name }}
+          path: output/*
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ============================================================
+  # RELEASE - Create GitHub Release when tag is pushed
+  # ============================================================
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-piaware, build-dump1090]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout for release notes
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        id: prepare-release
+        run: |
+          mkdir -p release
+
+          # Flatten all .deb files
+          find artifacts -name "*.deb" -exec cp {} release/ \;
+
+          # Create checksums
+          cd release
+          sha256sum *.deb > SHA256SUMS.txt 2>/dev/null || echo "No .deb files found"
+
+          # Generate release notes
+          cat > RELEASE_NOTES.md << EOF
+          # PiAware Packages for Debian/Raspbian
+
+          This release contains pre-built packages for:
+          - **Debian 13 (Trixie)** - Including Raspberry Pi OS Trixie
+          - **Debian 12 (Bookworm)** - Including Raspberry Pi OS Bookworm
+          - **Debian 11 (Bullseye)** - Including Raspberry Pi OS Bullseye
+
+          ## Architectures
+          - **armhf** (32-bit ARM) - For Raspberry Pi Zero W, Pi 2, Pi 3 (32-bit OS)
+          - **arm64** (64-bit ARM) - For Raspberry Pi 3, 4, 5 (64-bit OS)
+          - **amd64** (64-bit x86) - For standard PCs and servers
+
+          ## Installation
+
+          ### For Raspberry Pi Zero W (32-bit, Trixie):
+          \`\`\`bash
+          # Download the armhf packages for trixie
+          wget <url-to-piaware-trixie-armhf.deb>
+          wget <url-to-dump1090-fa-trixie-armhf.deb>
+
+          # Install
+          sudo dpkg -i dump1090-fa-*.deb
+          sudo dpkg -i piaware-*.deb
+          sudo apt-get install -f  # Fix any missing dependencies
+          \`\`\`
+
+          ## Packages in this release:
+          EOF
+
+          for f in *.deb 2>/dev/null; do
+            if [ -f "$f" ]; then
+              echo "- \`$f\`" >> RELEASE_NOTES.md
+            fi
+          done
+
+          echo "release_notes_path=$(pwd)/RELEASE_NOTES.md" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: ${{ steps.prepare-release.outputs.release_notes_path }}
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # SUMMARY - Post build summary
+  # ============================================================
+  summary:
+    if: always()
+    needs: [build-piaware, build-dump1090]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate build summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| PiAware | ${{ needs.build-piaware.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dump1090-fa | ${{ needs.build-dump1090.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered by: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Ref: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
