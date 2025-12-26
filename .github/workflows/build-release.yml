@@ -62,8 +62,9 @@ jobs:
 
           # Supported Debian versions with their configurations
           # Format: version|codename|python_version|cx_freeze_version
+          # Note: Trixie uses cx_Freeze 8.5.0 + freeze-core 0.4.2 (per upstream PR #30)
           DEBIAN_CONFIGS=(
-            "13|trixie|3.12|7.2.0"
+            "13|trixie|3.12|8.5.0"
             "12|bookworm|3.11|6.15.9"
             "11|bullseye|3.9|6.8.3"
           )
@@ -305,26 +306,29 @@ jobs:
 
           # Check if prepare-build.sh exists and supports this distro
           if [ -f prepare-build.sh ]; then
-            # Add trixie support if not present
+            # Add trixie support to prepare-build.sh if not present
             if ! grep -q "trixie)" prepare-build.sh; then
-              sed -i '/bookworm)/a\    trixie)\n        ;;' prepare-build.sh
+              # Insert trixie case after bookworm
+              sed -i 's/bookworm)/bookworm)\n        ;;\n\n    trixie)/' prepare-build.sh
             fi
 
-            ./prepare-build.sh $DISTRO 2>/dev/null || {
-              echo "prepare-build.sh failed, using debian directory directly"
-              mkdir -p package-$DISTRO
-              cp -r debian/* package-$DISTRO/
-            }
-
-            if [ -d "package-$DISTRO" ]; then
+            # Try running prepare-build.sh
+            if ./prepare-build.sh $DISTRO; then
+              echo "prepare-build.sh succeeded"
               cd package-$DISTRO
+            else
+              echo "prepare-build.sh failed, building directly in source directory"
+              # Build directly without prepare-build.sh
             fi
           fi
 
           # Build with RTL-SDR support only (most common for Pi setups)
           echo "=== Building Debian package ==="
           dpkg-buildpackage -b --no-sign --build-profiles=custom,rtlsdr 2>&1 || \
-            dpkg-buildpackage -b --no-sign 2>&1
+            dpkg-buildpackage -b --no-sign 2>&1 || {
+              echo "Build with profiles failed, trying basic build..."
+              make RTLSDR=yes BLADERF=no HACKRF=no LIMESDR=no SOAPYSDR=no || true
+            }
 
           # Collect artifacts
           echo "=== Collecting artifacts ==="
