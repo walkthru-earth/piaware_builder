@@ -251,7 +251,7 @@ jobs:
         with:
           name: ${{ steps.build-info.outputs.artifact_name }}
           path: output/*
-          retention-days: 30
+          retention-days: 14
           if-no-files-found: warn
 
   # ============================================================
@@ -367,7 +367,7 @@ jobs:
         with:
           name: ${{ steps.build-info.outputs.artifact_name }}
           path: output/*
-          retention-days: 30
+          retention-days: 14
           if-no-files-found: warn
 
   # ============================================================
@@ -432,7 +432,7 @@ jobs:
           ## Packages in this release:
           EOF
 
-          for f in *.deb 2>/dev/null; do
+          for f in *.deb; do
             if [ -f "$f" ]; then
               echo "- \`$f\`" >> RELEASE_NOTES.md
             fi
