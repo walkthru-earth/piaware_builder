@@ -88,7 +88,7 @@ build_mlat-client:
 	$(VENV)/bin/python -m pip install --no-index --no-deps --ignore-installed --require-virtualenv $$(ls $(CURDIR)/wheels/cx_[Ff]reeze-8.5.0*.whl)
 	# build mlat-client proper
 	$(VENV)/bin/python -m build --skip-dependency-check --no-isolation --wheel -C="--build-option=--plat-name" -C="--build-option=$(PYTHON_HOST_PLATFORM)" --outdir $(CURDIR)/wheels mlat-client
-	$(VENV)/bin/python -m pip install --no-index --no-deps --ignore-installed --require-virtualenv $(CURDIR)/wheels/mlatclient-*.whl
+	$(VENV)/bin/python -m pip install --no-index --no-deps --ignore-installed --require-virtualenv $$(ls $(CURDIR)/wheels/[Mm]lat[Cc]lient-*.whl)
 
 install_mlat-client:
 	# newer cxfreeze deletes --target-dir (see cxfreeze issue #1300), so we have to freeze to a temporary directory and
